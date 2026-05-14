@@ -360,6 +360,25 @@ let currentUser = null;
 let cart = {};
 let cartOpen = false;
 let menuData = [];
+let refreshInterval = null;
+let lastPedidoCount = 0;
+
+function playAlert() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [880, 1100, 880].forEach((freq, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = freq;
+      o.type = 'sine';
+      g.gain.setValueAtTime(0.4, ctx.currentTime + i * 0.18);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.18 + 0.15);
+      o.start(ctx.currentTime + i * 0.18);
+      o.stop(ctx.currentTime + i * 0.18 + 0.15);
+    });
+  } catch(e) {}
+}
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function notify(msg, duration = 3000) {
@@ -397,6 +416,7 @@ function showApp(user) {
 function logout() {
   currentUser = null;
   cart = {};
+  if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
   document.getElementById('app').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
 }
@@ -475,6 +495,7 @@ async function loadMenuEstudiante() {
     items.forEach(item => {
       const qty = cart[item.id] || 0;
       html += `<div class="menu-item">
+        ${item.imagen_url ? `<img src="${item.imagen_url}" style="width:100%;height:120px;object-fit:cover;border-radius:8px;margin-bottom:10px" onerror="this.style.display='none'">` : ''}
         <div class="menu-name">${item.nombre}</div>
         <div class="menu-desc">${item.descripcion || ''}</div>
         <div class="menu-footer">
@@ -668,6 +689,7 @@ async function loadPedidosEstudiante() {
 // RESTAURANTE
 // ═══════════════════════════════════════════════════════════════
 async function renderRestaurante(activeTab = 'pedidos') {
+  if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
   const main = document.getElementById('main-content');
   main.innerHTML = `
     <div class="nav-tabs">
@@ -677,14 +699,35 @@ async function renderRestaurante(activeTab = 'pedidos') {
     </div>
     <div id="tab-content"><div class="spinner">Cargando<span class="dot-pulse"></span></div></div>
   `;
-  if (activeTab === 'pedidos') await loadPedidosRest();
+  if (activeTab === 'pedidos') {
+    await loadPedidosRest();
+    // Auto-refresh cada 30 segundos con alerta de sonido
+    refreshInterval = setInterval(async () => {
+      const { data } = await sb.from('pedidos').select('id').in('estado', ['nuevo','preparando','listo']);
+      const count = (data || []).length;
+      if (count > lastPedidoCount) {
+        playAlert();
+        notify('🔔 ¡Nuevo pedido!');
+      }
+      lastPedidoCount = count;
+      await loadPedidosRest();
+    }, 30000);
+  }
   else if (activeTab === 'menu') await loadMenuRest();
   else await loadHistorialRest();
 }
 
 async function loadPedidosRest() {
   const { data: pedidos } = await sb.from('pedidos').select('*, detalle_pedidos(*)').in('estado', ['nuevo','preparando','listo']).order('created_at', { ascending: true });
-  let html = '<div class="section-title">Pedidos Activos <button class="btn btn-sm btn-outline" onclick="loadPedidosRest()">↺ Actualizar</button></div>';
+  lastPedidoCount = (pedidos || []).length;
+  const now = new Date().toLocaleTimeString('es-PE', {hour:'2-digit',minute:'2-digit'});
+  let html = `<div class="section-title">Pedidos Activos
+    <div style="display:flex;gap:8px;align-items:center">
+      <span style="font-size:11px;color:var(--muted)">↺ ${now}</span>
+      <span style="font-size:11px;color:var(--green);background:rgba(34,197,94,0.1);padding:3px 8px;border-radius:20px">● EN VIVO</span>
+      <button class="btn btn-sm btn-outline" onclick="loadPedidosRest()">Actualizar</button>
+    </div>
+  </div>`;
   (pedidos || []).forEach(p => {
     const items = p.detalle_pedidos?.map(d => `${d.cantidad}× ${d.nombre_plato}`).join('<br>') || '';
     let nextEstado = p.estado === 'nuevo' ? 'preparando' : p.estado === 'preparando' ? 'listo' : 'entregado';
@@ -731,12 +774,16 @@ async function loadMenuRest() {
       <input id="new-desc" type="text" placeholder="Descripción">
       <input id="new-cat" type="text" placeholder="Categoría (Ej: Menú, Bebidas)">
     </div>
+    <div class="form-row" style="margin-bottom:12px">
+      <input id="new-img" type="url" placeholder="URL de foto (pega link de Google o WhatsApp)">
+    </div>
     <button class="btn" style="width:auto;padding:10px 20px" onclick="agregarPlato()">+ Agregar</button>
   </div>`;
 
   (menu || []).forEach(item => {
-    html += `<div class="order-card" style="display:flex;align-items:center;justify-content:space-between">
-      <div>
+    html += `<div class="order-card" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+      ${item.imagen_url ? `<img src="${item.imagen_url}" style="width:64px;height:64px;object-fit:cover;border-radius:10px;flex-shrink:0" onerror="this.style.display='none'">` : `<div style="width:64px;height:64px;background:var(--surface2);border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:24px">🍽</div>`}
+      <div style="flex:1">
         <div style="font-weight:700">${item.nombre} <span class="menu-cat">${item.categoria}</span></div>
         <div style="font-size:13px;color:var(--muted)">${item.descripcion || ''}</div>
         <div style="color:var(--accent);font-family:'Space Mono',monospace;font-weight:700;margin-top:4px">S/ ${parseFloat(item.precio).toFixed(2)}</div>
@@ -758,8 +805,9 @@ async function agregarPlato() {
   const precio = parseFloat(document.getElementById('new-precio').value);
   const desc = document.getElementById('new-desc').value.trim();
   const cat = document.getElementById('new-cat').value.trim();
+  const img = document.getElementById('new-img').value.trim();
   if (!nombre || !precio || !cat) return notify('Completa nombre, precio y categoría');
-  const { error } = await sb.from('menu').insert({ nombre, precio, descripcion: desc, categoria: cat, disponible: true });
+  const { error } = await sb.from('menu').insert({ nombre, precio, descripcion: desc, categoria: cat, disponible: true, imagen_url: img || null });
   if (error) return notify('Error: ' + error.message);
   notify('✅ Plato agregado');
   await loadMenuRest();
