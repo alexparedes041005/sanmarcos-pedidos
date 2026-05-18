@@ -452,7 +452,29 @@ window.addEventListener('load', async () => {
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
     const { data: profile } = await sb.from('usuarios').select('*').eq('auth_id', session.user.id).single();
-    if (profile) showApp(profile);
+    if (profile) return showApp(profile);
+  }
+});
+
+// Detecta cuando el usuario confirma su correo y hace clic en el link
+sb.auth.onAuthStateChange(async (event, session) => {
+  if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session && !currentUser) {
+    const { data: profile } = await sb.from('usuarios').select('*').eq('auth_id', session.user.id).single();
+    if (profile) {
+      showApp(profile);
+    } else {
+      // Confirmó pero perfil no existe aún — pedirle que complete registro
+      document.getElementById('login-screen').innerHTML = `
+        <div class="login-box" style="text-align:center">
+          <div style="font-size:48px;margin-bottom:16px">✅</div>
+          <div class="login-logo">Correo <span>confirmado</span></div>
+          <div class="login-sub" style="margin-top:8px;margin-bottom:24px">
+            Tu correo fue verificado. Ahora completa tu registro.
+          </div>
+          <button class="btn" onclick="location.reload()">Completar registro →</button>
+        </div>
+      `;
+    }
   }
 });
 
