@@ -290,21 +290,17 @@
         <label>FACULTAD</label>
         <select id="reg-facultad">
           <option value="">Selecciona tu facultad</option>
-          <option>FISI</option>
-          <option>FII</option>
-          <option>FDCP</option>
-          <option>FIGMMG</option>
-          <option>FCF</option>
-          <option>FIEE</option>
-          <option>FLCH</option>
-          <option>FCE</option>
-          <option>FEDU</option>
-          <option>FIQI</option>
-          <option>FPSI</option>
-          <option>FCB</option>
-          <option>FCM</option>
-          <option>FCS</option>
-          <option>Otros</option>
+          <option>Ingeniería de Sistemas</option>
+          <option>Ingeniería Industrial</option>
+          <option>Medicina</option>
+          <option>Derecho</option>
+          <option>Letras y Ciencias Humanas</option>
+          <option>Ciencias Económicas</option>
+          <option>Educación</option>
+          <option>Química e Ingeniería Química</option>
+          <option>Ciencias Biológicas</option>
+          <option>Psicología</option>
+          <option>Otra</option>
         </select>
       </div>
       <div class="form-group">
@@ -470,30 +466,34 @@ async function loginEstudiante() {
   if (!nombre || !correo || !facultad || !pass) return showError('Completa todos los campos');
   if (pass.length < 6) return showError('La contraseña debe tener al menos 6 caracteres');
 
-  // Intentar login primero
-  const { data: signInData, error: signInError } = await sb.auth.signInWithPassword({ email: correo, password: pass });
-  if (signInData?.user) {
-    const { data: profile } = await sb.from('usuarios').select('*').eq('auth_id', signInData.user.id).single();
+  // Ver si el correo ya existe en nuestra tabla
+  const { data: existing } = await sb.from('usuarios').select('*').eq('correo', correo).single();
+
+  if (existing) {
+    // Usuario ya registrado → solo hacer login
+    const { data, error } = await sb.auth.signInWithPassword({ email: correo, password: pass });
+    if (error) return showError('Contraseña incorrecta');
+    const { data: profile } = await sb.from('usuarios').select('*').eq('auth_id', data.user.id).single();
     if (profile) return showApp(profile);
+    // Tiene cuenta pero sin auth_id (registrado antes del nuevo sistema)
+    await sb.from('usuarios').update({ auth_id: data.user.id }).eq('correo', correo);
+    return showApp({ ...existing, auth_id: data.user.id });
   }
 
-  // Si no existe, registrar
-  if (signInError?.message?.includes('Invalid login')) return showError('Contraseña incorrecta');
-
+  // Usuario nuevo → registrar en Auth y en tabla
   const { data: signUpData, error: signUpError } = await sb.auth.signUp({
     email: correo,
     password: pass,
     options: { emailRedirectTo: 'https://sanmarcos-pedidos.vercel.app' }
   });
-  if (signUpError) return showError('Error: ' + signUpError.message);
+  if (signUpError) return showError('Error al registrar: ' + signUpError.message);
 
-  if (signUpData.user) {
-    await sb.from('usuarios').insert({
-      auth_id: signUpData.user.id,
-      nombre, correo, rol: 'estudiante', facultad,
-      whatsapp: wsp || null
-    });
-  }
+  await sb.from('usuarios').insert({
+    auth_id: signUpData.user.id,
+    nombre, correo, rol: 'estudiante', facultad,
+    whatsapp: wsp || null
+  });
+
   showConfirmScreen(correo);
 }
 
