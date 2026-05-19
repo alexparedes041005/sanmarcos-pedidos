@@ -488,35 +488,30 @@ async function loginEstudiante() {
   if (!nombre || !correo || !facultad || !pass) return showError('Completa todos los campos');
   if (pass.length < 6) return showError('La contraseña debe tener al menos 6 caracteres');
 
-  // Ver si el correo ya existe en nuestra tabla
   const { data: existing } = await sb.from('usuarios').select('*').eq('correo', correo).single();
 
   if (existing) {
-    // Usuario ya registrado → solo hacer login
+    // Usuario ya registrado → hacer login
     const { data, error } = await sb.auth.signInWithPassword({ email: correo, password: pass });
     if (error) return showError('Contraseña incorrecta');
     const { data: profile } = await sb.from('usuarios').select('*').eq('auth_id', data.user.id).single();
     if (profile) return showApp(profile);
-    // Tiene cuenta pero sin auth_id (registrado antes del nuevo sistema)
     await sb.from('usuarios').update({ auth_id: data.user.id }).eq('correo', correo);
     return showApp({ ...existing, auth_id: data.user.id });
   }
 
-  // Usuario nuevo → registrar en Auth y en tabla
-  const { data: signUpData, error: signUpError } = await sb.auth.signUp({
-    email: correo,
-    password: pass,
-    options: { emailRedirectTo: 'https://sanmarcos-pedidos.vercel.app' }
-  });
+  // Usuario nuevo → registrar y entrar directo
+  const { data: signUpData, error: signUpError } = await sb.auth.signUp({ email: correo, password: pass });
   if (signUpError) return showError('Error al registrar: ' + signUpError.message);
 
-  await sb.from('usuarios').insert({
+  const { data: newProfile, error: insertError } = await sb.from('usuarios').insert({
     auth_id: signUpData.user.id,
     nombre, correo, rol: 'estudiante', facultad,
     whatsapp: wsp || null
-  });
+  }).select().single();
 
-  showConfirmScreen(correo);
+  if (insertError) return showError('Error al guardar perfil: ' + insertError.message);
+  showApp(newProfile);
 }
 
 async function loginRestaurante() {
